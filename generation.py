@@ -156,7 +156,7 @@ if __name__ == '__main__':
             attention_mask = attention_mask.cuda()
         with torch.no_grad():
             result = sample_sequence(gpt_model, 100, input_ids, attention_mask=attention_mask,
-                                     repetition_penalty=float(5 / 6), top_p=0.9, temperature=1.0)
+                                     repetition_penalty=0.9, top_p=0.9, temperature=0.9)
             sample_id_list.append(result)
 
         counter += 1
