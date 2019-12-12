@@ -1,12 +1,16 @@
+import os
+from typing import List
+
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, SequentialSampler
 from tqdm import trange
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
-
+import re
 from dataset import CNNDailyMailDataset
 from preprocessor import Preprocessor
+from io_util import output_iterator
 
 
 def set_seed(args):
@@ -49,47 +53,87 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
 
 def sample_sequence(model, length, context, attention_mask, num_samples=1, temperature=1, top_k=0, top_p=0.0,
                     repetition_penalty=1.0,
-                    ):
+                    ) -> torch.LongTensor:
     context = context.repeat(num_samples, 1)
-    generated = context
+    batch_size = context.size()[0]
+    input_ids = context
+    past = None
+    result = None
     with torch.no_grad():
-        for _ in trange(length):
-            inputs = {'input_ids': generated,
-                      'attention_mask': attention_mask}
+        for idx in trange(length):
+            inputs = {'input_ids': input_ids,
+                      'attention_mask': attention_mask,
+                      'past': past}
             outputs = model(
                 **inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet/CTRL (cached hidden-states)
+            past = outputs[1]
             next_token_logits = outputs[0][:, -1, :] / (temperature if temperature > 0 else 1.)
-
             # repetition penalty from CTRL (https://arxiv.org/abs/1909.05858)
-            for i in range(num_samples):
-                for _ in set(generated[i].tolist()):
-                    next_token_logits[i, _] /= repetition_penalty
+            if result is not None:
+                for i in range(batch_size):
+                    for _ in set(result[i].tolist()):
+                        next_token_logits[i, _] /= repetition_penalty
 
             filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
             if temperature == 0:  # greedy sampling:
                 next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
             else:
                 next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
-            generated = torch.cat((generated, next_token), dim=1)
-            attention_mask = torch.cat((attention_mask, torch.ones_like(next_token)), dim=1)
+            result = torch.cat((result, next_token), dim=1) if result is not None else next_token
+            attention_mask = torch.ones_like(next_token)
+            input_ids = next_token
 
-    return generated
+    return result
+
+
+def decode_id_array(id_list: List[np.ndarray]) -> List[str]:
+    flattened_id_list = np.vstack(id_list)
+    return [gpt_tokenizer.decode(arr.tolist()) for arr in flattened_id_list]
 
 
 if __name__ == '__main__':
-    root_dir = "/home/zxj/Downloads/cnn/stories_test"
+    root_dir = "/home/zxj/Downloads/cnn"
+    test_dir = os.path.join(root_dir, "stories_test")
     gpt_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-    gpt_model = GPT2LMHeadModel.from_pretrained("gpt2")
-    cnn_preprocessor = Preprocessor(root_dir, gpt_tokenizer)
+    gpt_model = GPT2LMHeadModel.from_pretrained("gpt2")  # type: GPT2LMHeadModel
+    use_cuda = torch.cuda.is_available()
+
+    cnn_preprocessor = Preprocessor(test_dir, gpt_tokenizer)
     tokenize = False
+    batch_size = 32
     content_list = cnn_preprocessor.get_document_summary(tokenize)
+    summary_list = ["\t".join(tup[1]) for tup in content_list]
+    partial_summary = summary_list[:64]
     cnn_dataset = CNNDailyMailDataset(content_list, gpt_tokenizer, 512, cnn_preprocessor.tokenized)
-    cnn_dataloader = DataLoader(cnn_dataset, batch_size=16, collate_fn=cnn_dataset.collate)
+    cnn_dataloader = DataLoader(cnn_dataset, shuffle=False, batch_size=batch_size,
+                                collate_fn=cnn_dataset.collate,
+                                pin_memory=torch.cuda.is_available())
     gpt_model = gpt_model.to("cuda")
+
+    summary_id_list = []
+    sample_id_list = []
+    limit = 2
+    counter = 0
     for ele in cnn_dataloader:
+        if counter == limit:
+            break
         input_ids, attention_mask, output_ids = ele
-        input_ids = input_ids.cuda()
-        attention_mask = attention_mask.cuda()
-        with torch.no_grad(): 
-            result = sample_sequence(gpt_model, 80, input_ids, attention_mask=attention_mask, top_p=0.9)
-            print(result.shape)
+        for ele in output_ids.numpy():
+            summary_id_list.append(ele.tolist())
+        if use_cuda:
+            input_ids = input_ids.cuda()
+            attention_mask = attention_mask.cuda()
+        with torch.no_grad():
+            result = sample_sequence(gpt_model, 100, input_ids, attention_mask=attention_mask,
+                                      repetition_penalty=0.83, top_p=1.0, temperature=0)
+            sample_id_list.append(result.detach()
+                                  .cpu().numpy())
+
+        counter += 1
+
+    sample_list = decode_id_array(sample_id_list)
+    for ele in sample_list:
+        print(re.sub("\n+", " ", ele))
+
+    #output_iterator(os.path.join(root_dir, "generated_summaries"), sample_list)
+

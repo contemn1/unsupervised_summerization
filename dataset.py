@@ -23,6 +23,8 @@ class CNNDailyMailDataset(Dataset):
         document_list, summary_list = self.content_list[idx]
         document_id_list = [idx for doc_sent in document_list for idx in self.__encode_sentence(doc_sent)]
         document_id_list = document_id_list[:self.max_seq_length]
+        tl_dr_ids = self.tokenizer.encode("TL;DR:")
+        document_id_list.extend(tl_dr_ids)
         summary_id_list = [idx for sum_sent in summary_list for idx in self.__encode_sentence(sum_sent)]
         return document_id_list, summary_id_list
 
@@ -32,6 +34,7 @@ class CNNDailyMailDataset(Dataset):
     def collate(self, batch_data):
         document_ids, summary_ids = zip(*batch_data)
         document_ids = list(document_ids)
+
         summary_ids = list(summary_ids)
         padded_doc_ids, doc_attention_mask = pad_sequence(document_ids, 0)
         padded_sum_ids, _ = pad_sequence(summary_ids, 0)
@@ -40,6 +43,7 @@ class CNNDailyMailDataset(Dataset):
 
 
 def pad_sequence(seq_list, padding_index, output_attention_mask=True):
+
     seq_length_list = [len(ele) for ele in seq_list]
     max_seq_length = max(seq_length_list)
     padding_matrix = np.full((len(seq_list), max_seq_length), fill_value=padding_index, dtype=np.int64)
