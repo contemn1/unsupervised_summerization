@@ -1,16 +1,43 @@
+import argparse
 import os
+import re
 from typing import List
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, SequentialSampler
+from torch.utils.data import DataLoader
 from tqdm import trange
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
-import re
+
 from dataset import CNNDailyMailDataset
-from preprocessor import Preprocessor
 from io_util import output_iterator
+from preprocessor import Preprocessor
+
+
+def init_argument_parser():
+    parser = argparse.ArgumentParser(description="Sentence Evaluation")
+
+    parser.add_argument("--input-dir", type=str, metavar="N",
+                        default="/home/zxj/Downloads/cnn/stories_test",
+                        help="path of data directory")
+
+    parser.add_argument("--batch-size", type=int,
+                        default=32,
+                        help="path of glove file")
+
+    parser.add_argument("--use-cuda", action='store_true',
+                        default=False,
+                        help="whether to use cuda")
+
+    parser.add_argument("--half-precision", action='store_true',
+                        default=False,
+                        help="whether to use half precision inference")
+
+    parser.add_argument("--output-dir", type=str,
+                        default="/home/zxj/Downloads/cnn/output")
+
+    return parser
 
 
 def set_seed(args):
@@ -92,8 +119,8 @@ def decode_id_array(id_list: List[np.ndarray]) -> List[str]:
 
 
 if __name__ == '__main__':
-    root_dir = "/home/zxj/Downloads/cnn"
-    test_dir = os.path.join(root_dir, "stories_test")
+    args = init_argument_parser().parse_args()
+    test_dir = args.input_dir
     gpt_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
     gpt_model = GPT2LMHeadModel.from_pretrained("gpt2")  # type: GPT2LMHeadModel
     use_cuda = torch.cuda.is_available()
@@ -103,7 +130,6 @@ if __name__ == '__main__':
     batch_size = 32
     content_list = cnn_preprocessor.get_document_summary(tokenize)
     summary_list = ["\t".join(tup[1]) for tup in content_list]
-    partial_summary = summary_list[:64]
     cnn_dataset = CNNDailyMailDataset(content_list, gpt_tokenizer, 512, cnn_preprocessor.tokenized)
     cnn_dataloader = DataLoader(cnn_dataset, shuffle=False, batch_size=batch_size,
                                 collate_fn=cnn_dataset.collate,
@@ -114,10 +140,12 @@ if __name__ == '__main__':
     sample_id_list = []
     limit = 2
     counter = 0
+    if args.half_precision:
+        gpt_model.half()
     for ele in cnn_dataloader:
+        input_ids, attention_mask, output_ids = ele
         if counter == limit:
             break
-        input_ids, attention_mask, output_ids = ele
         for ele in output_ids.numpy():
             summary_id_list.append(ele.tolist())
         if use_cuda:
@@ -125,15 +153,14 @@ if __name__ == '__main__':
             attention_mask = attention_mask.cuda()
         with torch.no_grad():
             result = sample_sequence(gpt_model, 100, input_ids, attention_mask=attention_mask,
-                                      repetition_penalty=0.83, top_p=1.0, temperature=0)
+                                     repetition_penalty=0.83, top_p=0.9, temperature=0.8)
             sample_id_list.append(result.detach()
                                   .cpu().numpy())
 
         counter += 1
 
     sample_list = decode_id_array(sample_id_list)
-    for ele in sample_list:
-        print(re.sub("\n+", " ", ele))
+    sample_list = [re.sub("\n+", "\t", ele) for ele in sample_list]
 
-    #output_iterator(os.path.join(root_dir, "generated_summaries"), sample_list)
-
+    output_iterator(os.path.join(args.output_dir, "generated_summaries"), sample_list)
+    output_iterator(os.path.join(args.output_dir, "actual_summaries"), summary_list)
