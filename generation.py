@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import re
 from typing import List
@@ -78,6 +79,7 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
     return logits
 
 
+@torch.no_grad()
 def sample_sequence(model, length, context, attention_mask, num_samples=1, temperature=1, top_k=0, top_p=0.0,
                     repetition_penalty=1.0,
                     ) -> torch.LongTensor:
@@ -86,30 +88,31 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
     input_ids = context
     past = None
     result = None
-    with torch.no_grad():
-        for idx in trange(length):
-            inputs = {'input_ids': input_ids,
-                      'attention_mask': attention_mask,
-                      'past': past}
-            outputs = model(
-                **inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet/CTRL (cached hidden-states)
-            past = outputs[1]
-            next_token_logits = outputs[0][:, -1, :] / (temperature if temperature > 0 else 1.)
-            # repetition penalty from CTRL (https://arxiv.org/abs/1909.05858)
-            if result is not None:
-                for i in range(batch_size):
-                    for _ in set(result[i].tolist()):
-                        next_token_logits[i, _] /= repetition_penalty
+    penalty_mask = torch.zeros(batch_size, 50257, device=context.device, dtype=next(model.parameters()).dtype)
+    penalty_value = torch.zeros(batch_size, 1, device=context.device, dtype=next(model.parameters()).dtype).fill_(
+        -math.log(repetition_penalty))
+    for idx in trange(length):
+        inputs = {'input_ids': input_ids,
+                  'attention_mask': attention_mask,
+                  'past': past}
+        outputs = model(
+            **inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet/CTRL (cached hidden-states)
+        past = outputs[1]
+        next_token_logits = outputs[0][:, -1, :] / (temperature if temperature > 0 else 1.)
+        # repetition penalty from CTRL (https://arxiv.org/abs/1909.05858)
+        if result is not None and repetition_penalty != 1.0:
+            penalty_mask.scatter_add_(1, input_ids, penalty_value)
+            next_token_logits = next_token_logits * torch.exp(penalty_mask)
 
-            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
-            if temperature == 0:  # greedy sampling:
-                next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
-            else:
-                filtered_logits = filtered_logits.float()
-                next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
-            result = torch.cat((result, next_token), dim=1) if result is not None else next_token
-            attention_mask = torch.ones_like(next_token)
-            input_ids = next_token
+        filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
+        if temperature == 0:  # greedy sampling:
+            next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
+        else:
+            filtered_logits = filtered_logits.float()
+            next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
+        result = torch.cat((result, next_token), dim=1) if result is not None else next_token
+        attention_mask = torch.ones_like(next_token)
+        input_ids = next_token
 
     return result
 
@@ -153,12 +156,12 @@ if __name__ == '__main__':
             attention_mask = attention_mask.cuda()
         with torch.no_grad():
             result = sample_sequence(gpt_model, 100, input_ids, attention_mask=attention_mask,
-                                     repetition_penalty=0.83, top_p=0.9, temperature=0.8)
-            sample_id_list.append(result.detach()
-                                  .cpu().numpy())
+                                     repetition_penalty=float(5 / 6), top_p=0.9, temperature=1.0)
+            sample_id_list.append(result)
 
         counter += 1
 
+    sample_id_list = [ele.cpu().numpy() for ele in sample_id_list]
     sample_list = decode_id_array(sample_id_list)
     sample_list = [re.sub("\n+", "\t", ele) for ele in sample_list]
 
