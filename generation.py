@@ -105,6 +105,7 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
             if temperature == 0:  # greedy sampling:
                 next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
             else:
+                filtered_logits = filtered_logits.float()
                 next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
             result = torch.cat((result, next_token), dim=1) if result is not None else next_token
             attention_mask = torch.ones_like(next_token)
@@ -127,25 +128,24 @@ if __name__ == '__main__':
 
     cnn_preprocessor = Preprocessor(test_dir, gpt_tokenizer)
     tokenize = False
-    batch_size = 32
+    batch_size = args.batch_size
     content_list = cnn_preprocessor.get_document_summary(tokenize)
     summary_list = ["\t".join(tup[1]) for tup in content_list]
     cnn_dataset = CNNDailyMailDataset(content_list, gpt_tokenizer, 512, cnn_preprocessor.tokenized)
     cnn_dataloader = DataLoader(cnn_dataset, shuffle=False, batch_size=batch_size,
                                 collate_fn=cnn_dataset.collate,
                                 pin_memory=torch.cuda.is_available())
-    gpt_model = gpt_model.to("cuda")
+    if args.half_precision:
+        gpt_model.half()
+    if use_cuda:
+        gpt_model = gpt_model.to("cuda")
 
     summary_id_list = []
     sample_id_list = []
     limit = 2
     counter = 0
-    if args.half_precision:
-        gpt_model.half()
     for ele in cnn_dataloader:
         input_ids, attention_mask, output_ids = ele
-        if counter == limit:
-            break
         for ele in output_ids.numpy():
             summary_id_list.append(ele.tolist())
         if use_cuda:
