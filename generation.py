@@ -10,10 +10,11 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import trange
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
-
+from torch.distributions import Categorical
 from dataset import CNNDailyMailDataset
 from io_util import output_iterator
 from preprocessor import Preprocessor
+
 
 
 def init_argument_parser():
@@ -80,7 +81,7 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
 
 
 @torch.no_grad()
-def sample_sequence(model, length, context, attention_mask, num_samples=1, temperature=1, top_k=0, top_p=0.0,
+def sample_sequence(model, length, context, attention_mask, num_samples=1, temperature: float = 1.0, top_k=0, top_p=0.0,
                     repetition_penalty=1.0,
                     ) -> torch.LongTensor:
     context = context.repeat(num_samples, 1)
@@ -109,7 +110,8 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
             next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
         else:
             filtered_logits = filtered_logits.float()
-            next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
+            distribution = Categorical(logits=F.log_softmax(filtered_logits, dim=-1))
+            next_token = distribution.sample()
         result = torch.cat((result, next_token), dim=1) if result is not None else next_token
         attention_mask = torch.ones_like(next_token)
         input_ids = next_token
@@ -163,7 +165,7 @@ if __name__ == '__main__':
 
     sample_id_list = [ele.cpu().numpy() for ele in sample_id_list]
     sample_list = decode_id_array(sample_id_list)
-    sample_list = [re.sub("\n+", "\t", ele) for ele in sample_list]
+    sample_list = [re.sub("\n+", " ", ele) for ele in sample_list]
 
     output_iterator(os.path.join(args.output_dir, "generated_summaries"), sample_list)
     output_iterator(os.path.join(args.output_dir, "actual_summaries"), summary_list)
