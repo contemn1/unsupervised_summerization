@@ -105,13 +105,13 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
             penalty_mask.scatter_add_(1, input_ids, penalty_value)
             next_token_logits = next_token_logits * torch.exp(penalty_mask)
 
-        filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
+        filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p, filter_value=-1e4)
         if temperature == 0:  # greedy sampling:
             next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
         else:
             filtered_logits = filtered_logits.float()
-            distribution = Categorical(logits=F.log_softmax(filtered_logits, dim=-1))
-            next_token = distribution.sample()
+            distribution = Categorical(logits=filtered_logits)
+            next_token = distribution.sample().unsqueeze(1)
         result = torch.cat((result, next_token), dim=1) if result is not None else next_token
         attention_mask = torch.ones_like(next_token)
         input_ids = next_token
@@ -158,7 +158,7 @@ if __name__ == '__main__':
             attention_mask = attention_mask.cuda()
         with torch.no_grad():
             result = sample_sequence(gpt_model, 100, input_ids, attention_mask=attention_mask,
-                                     repetition_penalty=0.9, top_p=0.9, temperature=0.9)
+                                     repetition_penalty=0.8, top_p=0.9, temperature=0.9)
             sample_id_list.append(result)
 
         counter += 1
