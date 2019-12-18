@@ -136,7 +136,7 @@ if __name__ == '__main__':
     tokenize = False
     batch_size = args.batch_size
     content_list = cnn_preprocessor.get_document_summary(tokenize)
-    summary_list = ["\t".join(tup[1]) for tup in content_list]
+    summary_list = [" ".join(tup[1]) for tup in content_list]
     cnn_dataset = CNNDailyMailDataset(content_list, gpt_tokenizer, 512, cnn_preprocessor.tokenized)
     cnn_dataloader = DataLoader(cnn_dataset, shuffle=False, batch_size=batch_size,
                                 collate_fn=cnn_dataset.collate,
