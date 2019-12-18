@@ -143,12 +143,13 @@ if __name__ == '__main__':
                                 pin_memory=torch.cuda.is_available())
     if args.half_precision:
         gpt_model.half()
-    
-    if args.use_multiple_gpu:
-        gpt_model = torch.nn.DataParallel(gpt_model)
-    
+        
     if use_cuda:
         gpt_model = gpt_model.to("cuda")
+
+    if args.use_multiple_gpu:
+    gpt_model = torch.nn.DataParallel(gpt_model)
+
 
 
     summary_id_list = []
