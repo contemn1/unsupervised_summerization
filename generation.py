@@ -39,6 +39,7 @@ def init_argument_parser():
     parser.add_argument("--output-dir", type=str,
                         default="/home/zxj/Downloads/cnn/output")
 
+    parser.add_argument("--use-multiple-gpu", action='store_true', default=False, help='whether to use multiple gpus at inference stage')
     return parser
 
 
@@ -142,8 +143,13 @@ if __name__ == '__main__':
                                 pin_memory=torch.cuda.is_available())
     if args.half_precision:
         gpt_model.half()
+    
+    if args.use_multiple_gpu:
+        gpt_model = torch.nn.DataParallel(gpt_model)
+    
     if use_cuda:
         gpt_model = gpt_model.to("cuda")
+
 
     summary_id_list = []
     sample_id_list = []
