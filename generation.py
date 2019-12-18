@@ -137,23 +137,23 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     content_list = cnn_preprocessor.get_document_summary(tokenize)
     summary_list = [" ".join(tup[1]) for tup in content_list]
+    
+
+    
     cnn_dataset = CNNDailyMailDataset(content_list, gpt_tokenizer, 512, cnn_preprocessor.tokenized)
     cnn_dataloader = DataLoader(cnn_dataset, shuffle=False, num_workers=8, batch_size=batch_size,
                                 collate_fn=cnn_dataset.collate,
                                 pin_memory=torch.cuda.is_available())
+    
     if args.half_precision:
         gpt_model.half()
     
     if use_cuda:
         gpt_model = gpt_model.to("cuda")
-    
  
-    summary_id_list = []
     sample_id_list = []
     for ele in cnn_dataloader:
         input_ids, attention_mask, output_ids = ele
-        for ele in output_ids.numpy():
-            summary_id_list.append(ele.tolist())
         if use_cuda:
             input_ids = input_ids.cuda()
             attention_mask = attention_mask.cuda()
@@ -167,5 +167,7 @@ if __name__ == '__main__':
     sample_list = decode_id_array(sample_id_list)
     sample_list = [re.sub("\n+", " ", ele) for ele in sample_list]
 
-    output_iterator(os.path.join(args.output_dir, "generated_summaries"), sample_list)
-    output_iterator(os.path.join(args.output_dir, "actual_summaries"), summary_list)
+    output_iterator(os.path.join(args.output_dir, "generated_summaries.txt"), sample_list)
+
+    output_iterator(os.path.join(args.output_dir, "actual_summaries.txt"), summary_list)
+    
