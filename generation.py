@@ -138,24 +138,18 @@ if __name__ == '__main__':
     content_list = cnn_preprocessor.get_document_summary(tokenize)
     summary_list = [" ".join(tup[1]) for tup in content_list]
     cnn_dataset = CNNDailyMailDataset(content_list, gpt_tokenizer, 512, cnn_preprocessor.tokenized)
-    cnn_dataloader = DataLoader(cnn_dataset, shuffle=False, batch_size=batch_size,
+    cnn_dataloader = DataLoader(cnn_dataset, shuffle=False, num_workers=8, batch_size=batch_size,
                                 collate_fn=cnn_dataset.collate,
                                 pin_memory=torch.cuda.is_available())
     if args.half_precision:
         gpt_model.half()
-        
+    
     if use_cuda:
         gpt_model = gpt_model.to("cuda")
-
-    if args.use_multiple_gpu:
-    gpt_model = torch.nn.DataParallel(gpt_model)
-
-
-
+    
+ 
     summary_id_list = []
     sample_id_list = []
-    limit = 2
-    counter = 0
     for ele in cnn_dataloader:
         input_ids, attention_mask, output_ids = ele
         for ele in output_ids.numpy():
@@ -168,7 +162,6 @@ if __name__ == '__main__':
                                      repetition_penalty=0.8, top_p=0.9, temperature=0.9)
             sample_id_list.append(result)
 
-        counter += 1
 
     sample_id_list = [ele.cpu().numpy() for ele in sample_id_list]
     sample_list = decode_id_array(sample_id_list)
