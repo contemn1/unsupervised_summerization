@@ -1,9 +1,7 @@
-import argparse
 import math
 import os
 import re
 from typing import List
-
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -14,33 +12,7 @@ from torch.distributions import Categorical
 from dataset import CNNDailyMailDataset
 from io_util import output_iterator
 from preprocessor import Preprocessor
-
-
-
-def init_argument_parser():
-    parser = argparse.ArgumentParser(description="Sentence Evaluation")
-
-    parser.add_argument("--input-dir", type=str, metavar="N",
-                        default="/home/zxj/Downloads/cnn/stories_test",
-                        help="path of data directory")
-
-    parser.add_argument("--batch-size", type=int,
-                        default=32,
-                        help="path of glove file")
-
-    parser.add_argument("--use-cuda", action='store_true',
-                        default=False,
-                        help="whether to use cuda")
-
-    parser.add_argument("--half-precision", action='store_true',
-                        default=False,
-                        help="whether to use half precision inference")
-
-    parser.add_argument("--output-dir", type=str,
-                        default="/home/zxj/Downloads/cnn/output")
-
-    parser.add_argument("--use-multiple-gpu", action='store_true', default=False, help='whether to use multiple gpus at inference stage')
-    return parser
+from config import init_argument_parser
 
 
 def set_seed(args):
@@ -62,21 +34,25 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
     top_k = min(top_k, logits.size(-1))  # Safety check
     if top_k > 0:
         # Remove all tokens with a probability less than the last token of the top-k
-        indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
+        indices_to_remove = logits < torch.topk(logits, top_k)[
+            0][..., -1, None]
         logits[indices_to_remove] = filter_value
 
     if top_p > 0.0:
         sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-        cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+        cumulative_probs = torch.cumsum(
+            F.softmax(sorted_logits, dim=-1), dim=-1)
 
         # Remove tokens with cumulative probability above the threshold
         sorted_indices_to_remove = cumulative_probs > top_p
         # Shift the indices to the right to keep also the first token above the threshold
-        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+        sorted_indices_to_remove[...,
+                                 1:] = sorted_indices_to_remove[..., :-1].clone()
         sorted_indices_to_remove[..., 0] = 0
 
         # scatter sorted tensors to original indexing
-        indices_to_remove = sorted_indices_to_remove.scatter(dim=1, index=sorted_indices, src=sorted_indices_to_remove)
+        indices_to_remove = sorted_indices_to_remove.scatter(
+            dim=1, index=sorted_indices, src=sorted_indices_to_remove)
         logits[indices_to_remove] = filter_value
     return logits
 
@@ -90,8 +66,10 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
     input_ids = context
     past = None
     result = None
-    penalty_mask = torch.zeros(batch_size, 50257, device=context.device, dtype=next(model.parameters()).dtype)
-    penalty_value = torch.zeros(batch_size, 1, device=context.device, dtype=next(model.parameters()).dtype).fill_(
+    data_type = next(model.parameters()).dtype
+    penalty_mask = torch.zeros(
+        batch_size, 50257, device=context.device, dtype=data_type)
+    penalty_value = torch.zeros(batch_size, 1, device=context.device, dtype=data_type).fill_(
         -math.log(repetition_penalty))
     for idx in trange(length):
         inputs = {'input_ids': input_ids,
@@ -100,20 +78,23 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
         outputs = model(
             **inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet/CTRL (cached hidden-states)
         past = outputs[1]
-        next_token_logits = outputs[0][:, -1, :] / (temperature if temperature > 0 else 1.)
+        next_token_logits = outputs[0][:, -1, :] / \
+            (temperature if temperature > 0 else 1.)
         # repetition penalty from CTRL (https://arxiv.org/abs/1909.05858)
         if result is not None and repetition_penalty != 1.0:
             penalty_mask.scatter_add_(1, input_ids, penalty_value)
             next_token_logits = next_token_logits * torch.exp(penalty_mask)
 
-        filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p, filter_value=-1e4)
+        filtered_logits = top_k_top_p_filtering(
+            next_token_logits, top_k=top_k, top_p=top_p, filter_value=-1e4)
         if temperature == 0:  # greedy sampling:
             next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
         else:
             filtered_logits = filtered_logits.float()
             distribution = Categorical(logits=filtered_logits)
             next_token = distribution.sample().unsqueeze(1)
-        result = torch.cat((result, next_token), dim=1) if result is not None else next_token
+        result = torch.cat((result, next_token),
+                           dim=1) if result is not None else next_token
         attention_mask = torch.ones_like(next_token)
         input_ids = next_token
 
@@ -129,7 +110,8 @@ if __name__ == '__main__':
     args = init_argument_parser().parse_args()
     test_dir = args.input_dir
     gpt_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-    gpt_model = GPT2LMHeadModel.from_pretrained("gpt2")  # type: GPT2LMHeadModel
+    gpt_model = GPT2LMHeadModel.from_pretrained(
+        "gpt2")  # type: GPT2LMHeadModel
     use_cuda = torch.cuda.is_available()
 
     cnn_preprocessor = Preprocessor(test_dir, gpt_tokenizer)
@@ -137,20 +119,20 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     content_list = cnn_preprocessor.get_document_summary(tokenize)
     summary_list = [" ".join(tup[1]) for tup in content_list]
-    
-
-    
-    cnn_dataset = CNNDailyMailDataset(content_list, gpt_tokenizer, 512, cnn_preprocessor.tokenized)
-    cnn_dataloader = DataLoader(cnn_dataset, shuffle=False, num_workers=8, batch_size=batch_size,
+    cnn_dataset = CNNDailyMailDataset(
+        content_list, gpt_tokenizer, 512, cnn_preprocessor.tokenized)
+    cnn_dataloader = DataLoader(cnn_dataset, shuffle=False, num_workers=8,
+                                batch_size=batch_size,
                                 collate_fn=cnn_dataset.collate,
                                 pin_memory=torch.cuda.is_available())
-    
+
+    gpt_model.eval()
     if args.half_precision:
         gpt_model.half()
-    
+
     if use_cuda:
         gpt_model = gpt_model.to("cuda")
- 
+
     sample_id_list = []
     for ele in cnn_dataloader:
         input_ids, attention_mask, output_ids = ele
@@ -162,12 +144,12 @@ if __name__ == '__main__':
                                      repetition_penalty=0.8, top_p=0.9, temperature=0.9)
             sample_id_list.append(result)
 
-
     sample_id_list = [ele.cpu().numpy() for ele in sample_id_list]
     sample_list = decode_id_array(sample_id_list)
     sample_list = [re.sub("\n+", " ", ele) for ele in sample_list]
 
-    output_iterator(os.path.join(args.output_dir, "generated_summaries.txt"), sample_list)
+    output_iterator(os.path.join(args.output_dir,
+                                 "generated_summaries.txt"), sample_list)
 
-    output_iterator(os.path.join(args.output_dir, "actual_summaries.txt"), summary_list)
-    
+    output_iterator(os.path.join(args.output_dir,
+                                 "actual_summaries.txt"), summary_list)
