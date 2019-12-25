@@ -84,18 +84,17 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
         if result is not None and repetition_penalty != 1.0:
             penalty_mask.scatter_add_(1, input_ids, penalty_value)
             next_token_logits = next_token_logits * torch.exp(penalty_mask)  
-        if torch.isnan(next_token_logits).sum() > 0:
-            print(next_token_logits.detach().cpu().numpy())
         filtered_logits = top_k_top_p_filtering(
             next_token_logits, top_k=top_k, top_p=top_p, filter_value=-1e4)
+        
         if temperature == 0:  # greedy sampling:
             next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
         else:
             filtered_logits = filtered_logits.float()
+            inf_logits = filtered_logits == float('inf')
+            if inf_logits.any().item():
+                print(torch.nonzero(inf_logits).cpu().numpy())
             distribution = Categorical(logits=filtered_logits)
-            nan_logits = torch.isnan(distribution.logits)
-            if nan_logits.any().item():
-                print(torch.nonzero(nan_logits).cpu().numpy())
             next_token = distribution.sample().unsqueeze(1)
         result = torch.cat((result, next_token),
                            dim=1) if result is not None else next_token
