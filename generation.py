@@ -91,9 +91,7 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
             next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
         else:
             filtered_logits = filtered_logits.float()
-            inf_logits = filtered_logits == float('inf')
-            if inf_logits.any().item():
-                print(torch.nonzero(inf_logits).cpu().numpy())
+            filtered_logits[filtered_logits == float('inf')] = 1e8
             distribution = Categorical(logits=filtered_logits)
             next_token = distribution.sample().unsqueeze(1)
         result = torch.cat((result, next_token),
