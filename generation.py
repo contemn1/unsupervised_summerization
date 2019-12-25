@@ -13,7 +13,7 @@ from dataset import CNNDailyMailDataset
 from io_util import output_iterator
 from preprocessor import Preprocessor
 from config import init_argument_parser
-
+from torch.nn import DataParallel
 
 def set_seed(args):
     np.random.seed(args.seed)
@@ -83,10 +83,13 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
         # repetition penalty from CTRL (https://arxiv.org/abs/1909.05858)
         if result is not None and repetition_penalty != 1.0:
             penalty_mask.scatter_add_(1, input_ids, penalty_value)
-            next_token_logits = next_token_logits * torch.exp(penalty_mask)
-
+            next_token_logits = next_token_logits * torch.exp(penalty_mask)  
+        if torch.isnan(next_token_logits).sum() > 0:
+            print(next_token_logits.detach().cpu().numpy())
         filtered_logits = top_k_top_p_filtering(
             next_token_logits, top_k=top_k, top_p=top_p, filter_value=-1e4)
+        if torch.isnan(filtered_logits).sum() > 0:
+            print(filtered_logits.detach().cpu().numpy())
         if temperature == 0:  # greedy sampling:
             next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
         else:
@@ -127,6 +130,9 @@ if __name__ == '__main__':
                                 pin_memory=torch.cuda.is_available())
 
     gpt_model.eval()
+
+    if args.use_multiple_gpu:
+        gpt_model = DataParallel(gpt_model)
     if args.half_precision:
         gpt_model.half()
 
