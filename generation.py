@@ -95,6 +95,8 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
         else:
             filtered_logits = filtered_logits.float()
             distribution = Categorical(logits=filtered_logits)
+            if torch.isnan(distribution.logits).sum() > 0:
+                print(distribution.logits.cpu())
             next_token = distribution.sample().unsqueeze(1)
         result = torch.cat((result, next_token),
                            dim=1) if result is not None else next_token
