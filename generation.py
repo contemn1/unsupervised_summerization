@@ -129,13 +129,14 @@ if __name__ == '__main__':
 
     gpt_model.eval()
 
-    if args.use_multiple_gpu:
-        gpt_model = DataParallel(gpt_model)
     if args.half_precision:
         gpt_model.half()
 
     if use_cuda:
         gpt_model = gpt_model.to("cuda")
+
+    if args.use_multiple_gpu:
+        gpt_model = DataParallel(gpt_model)
 
     sample_id_list = []
     for ele in cnn_dataloader:
