@@ -25,4 +25,6 @@ def init_argument_parser():
 
     parser.add_argument("--use-multiple-gpu", action='store_true',
                         default=False, help='whether to use multiple gpus at inference stage')
+    
+    parser.add_argument("--model-name", type=str, default="gpt", help="name of the pre-trained-model")
     return parser

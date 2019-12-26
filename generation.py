@@ -83,7 +83,10 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
         # repetition penalty from CTRL (https://arxiv.org/abs/1909.05858)
         if result is not None and repetition_penalty != 1.0:
             penalty_mask.scatter_add_(1, input_ids, penalty_value)
-            next_token_logits = next_token_logits * torch.exp(penalty_mask)  
+            negative_indices = next_token_logits < 0
+            actual_mask = penalty_mask.clone()
+            actual_mask[negative_indices] = - actual_mask[negative_indices]
+            next_token_logits = next_token_logits * torch.exp(actual_mask)
         filtered_logits = top_k_top_p_filtering(
             next_token_logits, top_k=top_k, top_p=top_p, filter_value=-1e4)
         
@@ -110,9 +113,9 @@ def decode_id_array(id_list: List[np.ndarray]) -> List[str]:
 if __name__ == '__main__':
     args = init_argument_parser().parse_args()
     test_dir = args.input_dir
-    gpt_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+    gpt_tokenizer = GPT2Tokenizer.from_pretrained(args.model_name)
     gpt_model = GPT2LMHeadModel.from_pretrained(
-        "gpt2")  # type: GPT2LMHeadModel
+        args.model_name)  # type: GPT2LMHeadModel
     use_cuda = torch.cuda.is_available()
 
     cnn_preprocessor = Preprocessor(test_dir, gpt_tokenizer)
