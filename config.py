@@ -9,7 +9,7 @@ def init_argument_parser():
                         help="path of data directory")
 
     parser.add_argument("--batch-size", type=int,
-                        default=32,
+                        default=24,
                         help="path of glove file")
 
     parser.add_argument("--use-cuda", action='store_true',
@@ -27,4 +27,6 @@ def init_argument_parser():
                         default=False, help='whether to use multiple gpus at inference stage')
     
     parser.add_argument("--model-name", type=str, default="gpt2", help="name of the pre-trained-model")
+
+    parser.add_argument("--method", type=str, default="extractive", help="methods used to generate summarization")
     return parser

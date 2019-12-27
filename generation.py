@@ -2,18 +2,21 @@ import math
 import os
 import re
 from typing import List
+
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.distributions import Categorical
+from torch.nn import DataParallel
 from torch.utils.data import DataLoader
 from tqdm import trange
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
-from torch.distributions import Categorical
+
+from config import init_argument_parser
 from dataset import CNNDailyMailDataset
 from io_util import output_iterator
 from preprocessor import Preprocessor
-from config import init_argument_parser
-from torch.nn import DataParallel
+
 
 def set_seed(args):
     np.random.seed(args.seed)
@@ -47,7 +50,7 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
         sorted_indices_to_remove = cumulative_probs > top_p
         # Shift the indices to the right to keep also the first token above the threshold
         sorted_indices_to_remove[...,
-                                 1:] = sorted_indices_to_remove[..., :-1].clone()
+        1:] = sorted_indices_to_remove[..., :-1].clone()
         sorted_indices_to_remove[..., 0] = 0
 
         # scatter sorted tensors to original indexing
@@ -58,14 +61,17 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
 
 
 @torch.no_grad()
-def sample_sequence(model, length, context, attention_mask, num_samples=1, temperature: float = 1.0, top_k=0, top_p=0.0,
+def sample_sequence(model, length, context, attention_mask, method, num_samples=1, temperature: float = 1.0, top_k=0,
+                    top_p=0.0,
                     repetition_penalty=1.0, min_seq_length=25, eos_idx=50256
                     ) -> torch.LongTensor:
     context = context.repeat(num_samples, 1)
+    previous_ids = context[:, :-1]
     batch_size = context.size()[0]
     input_ids = context
     past = None
     result = None
+    previous_embeddings = None
     data_type = next(model.parameters()).dtype
     penalty_mask = torch.zeros(
         batch_size, 50257, device=context.device, dtype=data_type)
@@ -78,8 +84,27 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
         outputs = model(
             **inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet/CTRL (cached hidden-states)
         past = outputs[1]
-        next_token_logits = outputs[0][:, -1, :] / \
-            (temperature if temperature > 0 else 1.)
+
+        if method == "extractive":
+            output_embeddings = outputs[2][-1]
+            current_embeddings = output_embeddings[:, -1, :]
+            if previous_embeddings is None:
+                previous_embeddings = output_embeddings[:, :-1, :]
+
+            attention_logits = torch.bmm(previous_embeddings, current_embeddings.unsqueeze(2)).squeeze(2)
+            attention_logits = attention_logits / current_embeddings.size(1)
+            attention_scores = torch.nn.Softmax(dim=-1)(attention_logits)
+            next_token_scores = torch.zeros(batch_size, 50257, device=input_ids.device,
+                                            dtype=data_type).scatter_add_(1, previous_ids, attention_scores)
+            next_token_scores = next_token_scores / torch.sum(next_token_scores, dim=1, keepdim=True)
+            next_token_logits = torch.log(next_token_scores)
+
+            previous_embeddings = torch.cat((previous_embeddings, current_embeddings.unsqueeze(1)), dim=1)
+            previous_ids = input_ids if idx == 0 else torch.cat((previous_ids, input_ids), dim=1)
+        else:
+            next_token_logits = outputs[0][:, -1, :]
+        next_token_logits = next_token_logits / (temperature if temperature > 0 else 1.)
+
         if idx < min_seq_length:
             next_token_logits[:, eos_idx] = -1e4
         # repetition penalty from CTRL (https://arxiv.org/abs/1909.05858)
@@ -91,7 +116,7 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
             next_token_logits = next_token_logits * torch.exp(actual_mask)
         filtered_logits = top_k_top_p_filtering(
             next_token_logits, top_k=top_k, top_p=top_p, filter_value=-1e4)
-        
+
         if temperature == 0:  # greedy sampling:
             next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
         else:
@@ -103,7 +128,6 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
                            dim=1) if result is not None else next_token
         attention_mask = torch.ones_like(next_token)
         input_ids = next_token
-
     return result
 
 
@@ -115,9 +139,10 @@ def decode_id_array(id_list: List[np.ndarray]) -> List[str]:
 if __name__ == '__main__':
     args = init_argument_parser().parse_args()
     test_dir = args.input_dir
-    gpt_tokenizer = GPT2Tokenizer.from_pretrained(args.model_name) # type: GPT2Tokenizer
+    gpt_tokenizer = GPT2Tokenizer.from_pretrained(args.model_name)  # type: GPT2Tokenizer
+    output_hidden = False if args.method == "abstractive" else True
     gpt_model = GPT2LMHeadModel.from_pretrained(
-        args.model_name)  # type: GPT2LMHeadModel
+        args.model_name, output_hidden_states=output_hidden)  # type: GPT2LMHeadModel
     use_cuda = torch.cuda.is_available()
 
     cnn_preprocessor = Preprocessor(test_dir, gpt_tokenizer)
@@ -150,8 +175,8 @@ if __name__ == '__main__':
             input_ids = input_ids.cuda()
             attention_mask = attention_mask.cuda()
         with torch.no_grad():
-            result = sample_sequence(gpt_model, 100, input_ids, attention_mask=attention_mask,
-                                     repetition_penalty=0.8, top_p=0.9, temperature=0.9,
+            result = sample_sequence(gpt_model, 100, input_ids, attention_mask, args.method,
+                                     repetition_penalty=1.2, top_p=0.9, temperature=0.9,
                                      eos_idx=gpt_tokenizer.eos_token_id)
             sample_id_list.append(result)
 
