@@ -59,7 +59,7 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
 
 @torch.no_grad()
 def sample_sequence(model, length, context, attention_mask, num_samples=1, temperature: float = 1.0, top_k=0, top_p=0.0,
-                    repetition_penalty=1.0,
+                    repetition_penalty=1.0, min_seq_length=25, eos_idx=50256
                     ) -> torch.LongTensor:
     context = context.repeat(num_samples, 1)
     batch_size = context.size()[0]
@@ -80,6 +80,8 @@ def sample_sequence(model, length, context, attention_mask, num_samples=1, tempe
         past = outputs[1]
         next_token_logits = outputs[0][:, -1, :] / \
             (temperature if temperature > 0 else 1.)
+        if idx < min_seq_length:
+            next_token_logits[:, eos_idx] = -1e4
         # repetition penalty from CTRL (https://arxiv.org/abs/1909.05858)
         if result is not None and repetition_penalty != 1.0:
             penalty_mask.scatter_add_(1, input_ids, penalty_value)
@@ -113,7 +115,7 @@ def decode_id_array(id_list: List[np.ndarray]) -> List[str]:
 if __name__ == '__main__':
     args = init_argument_parser().parse_args()
     test_dir = args.input_dir
-    gpt_tokenizer = GPT2Tokenizer.from_pretrained(args.model_name)
+    gpt_tokenizer = GPT2Tokenizer.from_pretrained(args.model_name) # type: GPT2Tokenizer
     gpt_model = GPT2LMHeadModel.from_pretrained(
         args.model_name)  # type: GPT2LMHeadModel
     use_cuda = torch.cuda.is_available()
@@ -149,7 +151,8 @@ if __name__ == '__main__':
             attention_mask = attention_mask.cuda()
         with torch.no_grad():
             result = sample_sequence(gpt_model, 100, input_ids, attention_mask=attention_mask,
-                                     repetition_penalty=0.8, top_p=0.9, temperature=0.9)
+                                     repetition_penalty=0.8, top_p=0.9, temperature=0.9,
+                                     eos_idx=gpt_tokenizer.eos_token_id)
             sample_id_list.append(result)
 
     sample_id_list = [ele.cpu().numpy() for ele in sample_id_list]
