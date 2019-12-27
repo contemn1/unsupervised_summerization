@@ -116,11 +116,10 @@ def sample_sequence(model, length, context, attention_mask, method, num_samples=
             next_token_logits = next_token_logits * torch.exp(actual_mask)
         filtered_logits = top_k_top_p_filtering(
             next_token_logits, top_k=top_k, top_p=top_p, filter_value=-1e4)
-
+        filtered_logits = filtered_logits.float()
         if temperature == 0:  # greedy sampling:
             next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
         else:
-            filtered_logits = filtered_logits.float()
             filtered_logits[filtered_logits == float('inf')] = 1e8
             distribution = Categorical(logits=filtered_logits)
             next_token = distribution.sample().unsqueeze(1)
