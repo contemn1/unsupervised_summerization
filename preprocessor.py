@@ -1,10 +1,15 @@
+import json
 import os
+import re
 from collections import deque
 from typing import Iterable
 from typing import List
-from io_util import read_file
+
+from spacy.lang.en import English
 from transformers import GPT2Tokenizer
 
+from io_util import read_file, output_iterator, split_file
+from bisect import bisect_left
 
 def tokenize_list(content_list: List[str], tokenizer: GPT2Tokenizer):
     return [tokenizer.tokenize(sentence) for sentence in content_list]
@@ -72,6 +77,66 @@ class Preprocessor(object):
 
         if tokenize:
             self.tokenized = tokenize
-            result_list = [(tokenize_list(doc, self.tokenizer), tokenize_list(summary, self.tokenizer)) for doc, summary in result_list]
+            result_list = [(tokenize_list(doc, self.tokenizer), tokenize_list(summary, self.tokenizer)) for doc, summary
+                           in result_list]
         return result_list
 
+
+def chunks(input_list, number):
+    size = len(input_list) // number + 1
+
+    for idx in range(0, len(input_list), size):
+        yield input_list[idx: idx + size]
+
+
+def preprocess_file(test_dir, summary_path):
+    cnn_preprocessor = Preprocessor(test_dir, tokenizer=None)
+    tokenize = False
+    content_list = cnn_preprocessor.get_document_summary(tokenize)
+    doc_list, summary_list = zip(*content_list)
+    nlp = English()
+    tokenizer = nlp.Defaults.create_tokenizer(nlp)
+    sentencizer = nlp.create_pipe("sentencizer")
+    nlp.add_pipe(sentencizer)
+    cnn_pattern = re.compile(r"\(CNN\)")
+    #words = ([ele.text for sent in doc for ele in nlp(cnn_pattern.sub("", sent)).sents] for doc in doc_list)
+    summaries = [[" ".join([ele.text for ele in tokenizer(sent)]) for sent in sum] for sum in summary_list]
+    #output_iterator(os.path.join(output_path, "cnn_dm_input.txt"), words, process=lambda x: "\001".join(x))
+    output_iterator(summary_path, summaries, process=lambda x: "\001".join(x))
+
+
+def partition_documents(doc_list, num_partitions):
+    counter = 0
+    new_sentence_list = []
+    partition_map = dict()
+    for idx, ele in enumerate(doc_list):
+        if len(ele) < 6:
+            new_sentence_list.append(" ".join(ele))
+            partition_map[counter] = idx
+            counter += 1
+            continue
+
+        for part in chunks(ele, num_partitions):
+            new_sentence_list.append(" ".join(part))
+            partition_map[counter] = idx
+            counter += 1
+    return new_sentence_list, partition_map
+
+
+def merge_partition(partition_map, input_iter):
+    max_length = max(partition_map.values()) + 1
+    new_result_list = ["" for _ in range(max_length)]
+    for idx, ele in enumerate(input_iter):
+        new_result_list[partition_map[str(idx)]] += ele
+        new_result_list[partition_map[str(idx)]] += " "
+    return new_result_list
+
+if __name__ == '__main__':
+    input_dir = "/home/zxj/Downloads/cnn_dm_test/2part"
+    input_file = os.path.join(input_dir, "cnn_dm_input_truncated")
+    output_template = input_file + "_part{0}.txt"
+    input_list = list(read_file(input_file, preprocess=lambda x: x.strip()))
+    num_chunks = 6
+    output_iter = chunks(input_list, num_chunks)
+    for idx, res in enumerate(output_iter):
+        output_iterator(output_template.format(idx), res)
