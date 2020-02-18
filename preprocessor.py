@@ -83,8 +83,11 @@ class Preprocessor(object):
 
 
 def chunks(input_list, number):
-    size = len(input_list) // number + 1
-
+    size = len(input_list) / number
+    if size > len(input_list) // number:
+        size = int(size) + 1
+    else:
+        size = int(size)
     for idx in range(0, len(input_list), size):
         yield input_list[idx: idx + size]
 
@@ -110,7 +113,7 @@ def partition_documents(doc_list, num_partitions):
     new_sentence_list = []
     partition_map = dict()
     for idx, ele in enumerate(doc_list):
-        if len(ele) < 6:
+        if len(ele) < num_partitions:
             new_sentence_list.append(" ".join(ele))
             partition_map[counter] = idx
             counter += 1
@@ -132,11 +135,10 @@ def merge_partition(partition_map, input_iter):
     return new_result_list
 
 if __name__ == '__main__':
-    input_dir = "/home/zxj/Downloads/cnn_dm_test/2part"
-    input_file = os.path.join(input_dir, "cnn_dm_input_truncated")
-    output_template = input_file + "_part{0}.txt"
-    input_list = list(read_file(input_file, preprocess=lambda x: x.strip()))
-    num_chunks = 6
-    output_iter = chunks(input_list, num_chunks)
-    for idx, res in enumerate(output_iter):
-        output_iterator(output_template.format(idx), res)
+    input_dir = "/home/zxj/Documents/github/PacSum/extracted_parts/extracted_contents_all.txt"
+    output_template = "/home/zxj/Documents/github/PacSum/extracted_parts/content_part_{0}.txt"
+    doc_list = list(read_file(input_dir, preprocess=lambda x: x.strip()))
+    idx = 0
+    for ele in chunks(doc_list, 7):
+        output_iterator(output_template.format(idx), ele)
+        idx += 1
